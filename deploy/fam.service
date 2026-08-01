@@ -1,0 +1,19 @@
+[Unit]
+Description=Наш быт (fam) family chore tracker
+After=network.target
+
+[Service]
+Type=simple
+User=fam
+Group=fam
+WorkingDirectory=/var/lib/fam
+Environment=FAM_STATIC=/opt/fam/frontend/dist
+# Environment=FAM_DATA=/var/lib/fam/fam-data.json
+# Environment=FAM_BIND=0.0.0.0:7878
+# Environment=FAM_CORS_ORIGINS=
+ExecStart=/opt/fam/bin/fam-backend
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
