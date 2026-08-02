@@ -230,7 +230,9 @@ function onKeydown(e) {
 
 startLoop({
   onTickExtra: {
-    afterFirstRefresh: () => maybeOpenOnboardNames(),
+    afterFirstRefresh: () => {
+      if (!IS_LOCAL_DEMO) maybeOpenOnboardNames()
+    },
     onMount: () => window.addEventListener('keydown', onKeydown),
     onUnmount: () => {
       window.removeEventListener('keydown', onKeydown)
