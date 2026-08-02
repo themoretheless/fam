@@ -67,6 +67,12 @@ class MemoryStatement implements D1PreparedStatement {
 
       if (this.database.conflictsRemaining > 0) {
         this.database.conflictsRemaining -= 1;
+        if (this.database.conflictStateMutation) {
+          const state = JSON.parse(this.database.row.state_json) as Record<string, unknown>;
+          this.database.conflictStateMutation(state);
+          this.database.row.state_json = JSON.stringify(state);
+          this.database.conflictStateMutation = null;
+        }
         this.database.row.revision += 1;
         return { success: true, meta: { changes: 0 } } as T;
       }
@@ -95,7 +101,22 @@ export class MemoryD1 implements D1Database {
   insertRuns = 0;
   updateRuns = 0;
   conflictsRemaining = 0;
+  conflictStateMutation: ((state: Record<string, unknown>) => void) | null = null;
   failUpdates = false;
+
+  seedStoredState(state: unknown, revision = 0, schemaVersion = 1): void {
+    this.row = {
+      schema_version: schemaVersion,
+      revision,
+      state_json: JSON.stringify(state),
+      updated_at_ms: 0,
+    };
+  }
+
+  parsedState<T = Record<string, unknown>>(): T {
+    if (!this.row) throw new Error("state row missing");
+    return JSON.parse(this.row.state_json) as T;
+  }
 
   prepare(query: string): D1PreparedStatement {
     return new MemoryStatement(this, query);

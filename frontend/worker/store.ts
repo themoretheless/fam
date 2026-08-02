@@ -1,8 +1,46 @@
 import { defaultDb } from "./domain";
+import type { Db, FamilyShelfItem, MemorableDate, Player } from "./types";
 
 export const STATE_SCHEMA_VERSION = 1;
+export const CONTENT_SEED_VERSION = 2;
 export const MAX_STATE_BYTES = 1_500_000;
 export const MAX_CAS_ATTEMPTS = 5;
+
+export const EXAMPLE_FAMILY_SHELF: readonly FamilyShelfItem[] = [
+  {
+    id: "example-shelf-dinner",
+    title: "Пример: приготовить ужин",
+    emoji: "🍳",
+    base_points: 20,
+    hours: 12,
+    repeat: false,
+    interval_hours: null,
+  },
+  {
+    id: "example-shelf-bedding",
+    title: "Пример: сменить постельное бельё",
+    emoji: "🛏️",
+    base_points: 20,
+    hours: 48,
+    repeat: true,
+    interval_hours: 168,
+  },
+];
+
+export const EXAMPLE_MEMORABLE_DATES: readonly MemorableDate[] = [
+  {
+    id: "example-date-meeting",
+    title: "Пример: день знакомства",
+    date: "2024-02-14",
+    kind: "meeting",
+  },
+  {
+    id: "example-date-moving",
+    title: "Пример: годовщина переезда",
+    date: "2023-09-01",
+    kind: "anniversary",
+  },
+];
 
 const MAX_FINISHED_TASKS = 200;
 const MAX_EVENTS = 30;
@@ -170,6 +208,125 @@ function changesOf(result: D1RunResult): number {
   return Number.isFinite(Number(changes)) ? Number(changes) : 0;
 }
 
+const DB_KEYS = Object.keys(defaultDb()).sort();
+const PLAYER_KEYS: ReadonlyArray<keyof Player> = [
+  "avatar",
+  "comeback_week_key",
+  "id",
+  "last_claim_at",
+  "name",
+  "score",
+  "xp",
+];
+
+function hasOnlyKeys(value: object, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
+}
+
+function isDefaultPlayer(value: unknown, expected: Player): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const player = value as Record<string, unknown>;
+  if (!hasOnlyKeys(player, PLAYER_KEYS)) return false;
+  return PLAYER_KEYS.every((key) => player[key] === expected[key]);
+}
+
+function hasPristineContent(state: StoredState): boolean {
+  if (!hasOnlyKeys(state, DB_KEYS)) return false;
+
+  const baseline = defaultDb();
+  if (!Array.isArray(state.players) || state.players.length !== baseline.players.length) {
+    return false;
+  }
+  if (!state.players.every((player, index) => isDefaultPlayer(player, baseline.players[index]!))) {
+    return false;
+  }
+
+  const emptyCollections: Array<keyof Pick<
+    Db,
+    | "tasks"
+    | "events"
+    | "seasons"
+    | "achievements"
+    | "family_shelf"
+    | "memorable_dates"
+  >> = [
+    "tasks",
+    "events",
+    "seasons",
+    "achievements",
+    "family_shelf",
+    "memorable_dates",
+  ];
+  if (!emptyCollections.every((key) => Array.isArray(state[key]) && state[key].length === 0)) {
+    return false;
+  }
+  return state.week_burns === 0 && state.week_claims === 0;
+}
+
+function isSystemWeekKey(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(value)
+  );
+}
+
+function mayReceiveExamples(state: StoredState, revision: number): boolean {
+  if (Object.prototype.hasOwnProperty.call(state, "content_seed_version")) return false;
+  if (!hasPristineContent(state)) return false;
+  return (
+    (revision === 0 && state.week_key === "") ||
+    (revision === 1 && isSystemWeekKey(state.week_key))
+  );
+}
+
+function hasCompletedContentSeed(state: StoredState): boolean {
+  const version = state.content_seed_version;
+  return Number.isSafeInteger(version) && (version ?? 0) >= CONTENT_SEED_VERSION;
+}
+
+/** Mutates a loaded snapshot once; revision is part of the conservative safety check. */
+export function applyExampleContentSeed(state: StoredState, revision: number): boolean {
+  if (hasCompletedContentSeed(state)) return false;
+
+  if (mayReceiveExamples(state, revision)) {
+    state.family_shelf.push(...EXAMPLE_FAMILY_SHELF.map((item) => ({ ...item })));
+    state.memorable_dates.push(...EXAMPLE_MEMORABLE_DATES.map((item) => ({ ...item })));
+  }
+  state.content_seed_version = CONTENT_SEED_VERSION;
+  return true;
+}
+
+async function bootstrapExampleContent(db: D1Database): Promise<void> {
+  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+    const loaded = await selectState(db);
+    const draft = cloneState(loaded.state);
+    if (!applyExampleContentSeed(draft, loaded.revision)) return;
+
+    const serialized = serializeState(draft);
+    let result: D1RunResult;
+    try {
+      result = (await db
+        .prepare(UPDATE_STATE)
+        .bind(
+          STATE_SCHEMA_VERSION,
+          serialized.json,
+          Date.now(),
+          loaded.revision,
+        )
+        .run()) as D1RunResult;
+    } catch (error) {
+      throw new StateStoreError("Не удалось сохранить примеры", { cause: error });
+    }
+    if (result.success === false) {
+      throw new StateStoreError("Не удалось сохранить примеры");
+    }
+    if (changesOf(result) === 1) return;
+  }
+
+  throw new StateConflictError();
+}
+
 async function initializeSchema(db: D1Database): Promise<void> {
   await db.prepare(CREATE_STATE_TABLE).run();
   const initial = JSON.stringify(defaultDb());
@@ -180,6 +337,7 @@ async function initializeSchema(db: D1Database): Promise<void> {
     .prepare(INSERT_DEFAULT_STATE)
     .bind(STATE_SCHEMA_VERSION, initial, Date.now())
     .run();
+  await bootstrapExampleContent(db);
 }
 
 export async function ensureSchema(db: D1Database): Promise<void> {

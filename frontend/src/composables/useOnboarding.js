@@ -7,9 +7,16 @@ const PHONE_KEY = 'fam-phone-hint-dismissed'
 const STARTER_KEY = 'fam-starter-used'
 
 export const STARTER_TASKS = [
-  { title: 'Помыть посуду', emoji: '🍽️', base_points: 10, hours: 6, repeat: false },
-  { title: 'Вынести мусор', emoji: '🗑️', base_points: 15, hours: 12, repeat: false },
-  { title: 'Протереть стол', emoji: '🧹', base_points: 10, hours: 24, repeat: false }
+  { title: 'Пример: помыть посуду', emoji: '🍽️', base_points: 10, hours: 6, repeat: false },
+  { title: 'Пример: вынести мусор', emoji: '🗑️', base_points: 15, hours: 12, repeat: false },
+  {
+    title: 'Пример: полить растения',
+    emoji: '🪴',
+    base_points: 10,
+    hours: 24,
+    repeat: true,
+    interval_hours: 72
+  }
 ]
 
 /** First-run rename, phone hint, starter pack. */

@@ -140,6 +140,12 @@ describe("same-origin Worker router", () => {
     expect(stateResponse.status).toBe(200);
     const state = await responseJson(stateResponse);
     expect(state.server_now).toEqual(expect.any(Number));
+    expect(state).not.toHaveProperty("content_seed_version");
+    expect(state.family_shelf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "example-shelf-dinner" }),
+      ]),
+    );
     expect(state.tasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: created.id, title: "Забронировать отпуск" }),

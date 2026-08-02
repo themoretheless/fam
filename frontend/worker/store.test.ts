@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { defaultDb } from "./domain";
 import { MemoryD1 } from "./test-d1";
 import {
+  applyExampleContentSeed,
+  CONTENT_SEED_VERSION,
   ensureSchema,
+  EXAMPLE_FAMILY_SHELF,
+  EXAMPLE_MEMORABLE_DATES,
   loadState,
   MAX_CAS_ATTEMPTS,
   mutateState,
@@ -10,7 +15,7 @@ import {
 } from "./store";
 
 describe("D1 state store", () => {
-  it("creates and seeds the singleton exactly once per binding", async () => {
+  it("creates the singleton and seeds neutral examples exactly once per binding", async () => {
     const database = new MemoryD1();
 
     await Promise.all([ensureSchema(database), ensureSchema(database)]);
@@ -18,13 +23,115 @@ describe("D1 state store", () => {
 
     expect(database.schemaRuns).toBe(1);
     expect(database.insertRuns).toBe(1);
-    expect(loaded.revision).toBe(0);
+    expect(database.updateRuns).toBe(1);
+    expect(loaded.revision).toBe(1);
     expect(loaded.state.players.map((player) => player.id)).toEqual(["p1", "p2"]);
+    expect(loaded.state.tasks).toEqual([]);
+    expect(loaded.state.family_shelf).toEqual(EXAMPLE_FAMILY_SHELF);
+    expect(loaded.state.memorable_dates).toEqual(EXAMPLE_MEMORABLE_DATES);
+    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+  });
+
+  it("applies the content seed idempotently", () => {
+    const state = defaultDb();
+
+    expect(applyExampleContentSeed(state, 0)).toBe(true);
+    const seeded = JSON.stringify(state);
+    expect(applyExampleContentSeed(state, 1)).toBe(false);
+    expect(JSON.stringify(state)).toBe(seeded);
+  });
+
+  it("seeds an untouched v1 row after its sole technical week initialization", async () => {
+    const database = new MemoryD1();
+    database.seedStoredState({ ...defaultDb(), week_key: "2026-W31" }, 1);
+
+    const loaded = await loadState(database);
+
+    expect(loaded.revision).toBe(2);
+    expect(loaded.state.week_key).toBe("2026-W31");
+    expect(loaded.state.family_shelf).toEqual(EXAMPLE_FAMILY_SHELF);
+    expect(loaded.state.memorable_dates).toEqual(EXAMPLE_MEMORABLE_DATES);
+  });
+
+  it("marks an ambiguous visually empty row without adding examples", async () => {
+    const database = new MemoryD1();
+    database.seedStoredState(defaultDb(), 2);
+
+    const loaded = await loadState(database);
+
+    expect(loaded.revision).toBe(3);
+    expect(loaded.state.family_shelf).toEqual([]);
+    expect(loaded.state.memorable_dates).toEqual([]);
+    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+  });
+
+  it("does not restore examples after the family deletes them", async () => {
+    const database = new MemoryD1();
+    await loadState(database);
+
+    await mutateState(database, (draft) => {
+      draft.family_shelf = [];
+      draft.memorable_dates = [];
+      return { changed: true, value: null };
+    });
+    const afterDelete = await loadState(database);
+
+    expect(afterDelete.state.family_shelf).toEqual([]);
+    expect(afterDelete.state.memorable_dates).toEqual([]);
+    expect(afterDelete.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+  });
+
+  it("reclassifies after a real concurrent user edit and never overwrites it", async () => {
+    const database = new MemoryD1();
+    database.conflictsRemaining = 1;
+    database.conflictStateMutation = (state) => {
+      const players = state.players as Array<Record<string, unknown>>;
+      players[0]!.name = "Аня";
+    };
+
+    const loaded = await loadState(database);
+
+    expect(loaded.revision).toBe(2);
+    expect(loaded.state.players[0]!.name).toBe("Аня");
+    expect(loaded.state.family_shelf).toEqual([]);
+    expect(loaded.state.memorable_dates).toEqual([]);
+    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+  });
+
+  it("retries safely after bootstrap exhausts its CAS budget", async () => {
+    const database = new MemoryD1();
+    database.conflictsRemaining = MAX_CAS_ATTEMPTS;
+
+    await expect(ensureSchema(database)).rejects.toBeInstanceOf(StateStoreError);
+    expect(database.row?.revision).toBe(MAX_CAS_ATTEMPTS);
+    expect(database.parsedState()).not.toHaveProperty("content_seed_version");
+
+    const loaded = await loadState(database);
+    expect(loaded.revision).toBe(MAX_CAS_ATTEMPTS + 1);
+    expect(loaded.state.family_shelf).toEqual([]);
+    expect(loaded.state.memorable_dates).toEqual([]);
+    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+  });
+
+  it("leaves the v1 JSON untouched when bootstrap persistence fails", async () => {
+    const database = new MemoryD1();
+    const original = defaultDb();
+    database.seedStoredState(original);
+    database.failUpdates = true;
+
+    await expect(ensureSchema(database)).rejects.toBeInstanceOf(StateStoreError);
+    expect(database.parsedState()).toEqual(original);
+    expect(database.row?.revision).toBe(0);
+
+    database.failUpdates = false;
+    const loaded = await loadState(database);
+    expect(loaded.state.family_shelf).toEqual(EXAMPLE_FAMILY_SHELF);
   });
 
   it("deep-clones state and leaves storage untouched when a reducer fails", async () => {
     const database = new MemoryD1();
     const before = await loadState(database);
+    const updatesBefore = database.updateRuns;
 
     await expect(
       mutateState(database, (draft) => {
@@ -35,11 +142,13 @@ describe("D1 state store", () => {
 
     const after = await loadState(database);
     expect(after).toEqual(before);
-    expect(database.updateRuns).toBe(0);
+    expect(database.updateRuns).toBe(updatesBefore);
   });
 
   it("replays the reducer after CAS conflicts and commits the latest draft", async () => {
     const database = new MemoryD1();
+    const initial = await loadState(database);
+    const updatesBefore = database.updateRuns;
     database.conflictsRemaining = 2;
     let reducerRuns = 0;
 
@@ -50,14 +159,16 @@ describe("D1 state store", () => {
     });
 
     expect(reducerRuns).toBe(3);
-    expect(database.updateRuns).toBe(3);
-    expect(result.revision).toBe(3);
+    expect(database.updateRuns - updatesBefore).toBe(3);
+    expect(result.revision).toBe(initial.revision + 3);
     expect(result.value).toBe(1);
     expect((await loadState(database)).state.week_claims).toBe(1);
   });
 
   it("returns a conflict error after five failed CAS attempts", async () => {
     const database = new MemoryD1();
+    await loadState(database);
+    const updatesBefore = database.updateRuns;
     database.conflictsRemaining = MAX_CAS_ATTEMPTS;
     let reducerRuns = 0;
 
@@ -70,11 +181,12 @@ describe("D1 state store", () => {
     ).rejects.toBeInstanceOf(StateConflictError);
 
     expect(reducerRuns).toBe(MAX_CAS_ATTEMPTS);
-    expect(database.updateRuns).toBe(MAX_CAS_ATTEMPTS);
+    expect(database.updateRuns - updatesBefore).toBe(MAX_CAS_ATTEMPTS);
   });
 
   it("wraps D1 write failures as service-availability errors", async () => {
     const database = new MemoryD1();
+    await loadState(database);
     database.failUpdates = true;
 
     await expect(

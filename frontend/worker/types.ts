@@ -78,6 +78,8 @@ export interface MemorableDate {
 }
 
 export interface Db {
+  /** Internal one-time content bootstrap marker. Never exposed by StateResponse. */
+  content_seed_version?: number
   players: Player[]
   tasks: Task[]
   events: FamEvent[]
