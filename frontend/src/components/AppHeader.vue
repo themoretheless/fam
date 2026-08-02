@@ -115,6 +115,14 @@ const emit = defineEmits([
   gap: 8px;
 }
 
+.mute-btn,
+.theme-btn,
+.quiet-btn,
+.notif-btn {
+  z-index: 10;
+  touch-action: manipulation;
+}
+
 .demo-notice {
   display: flex;
   flex-wrap: wrap;

@@ -418,6 +418,7 @@ async function onResetDemo() {
     />
 
     <OnboardNamesModal
+      v-if="!IS_LOCAL_DEMO"
       :open="onboardNamesOpen"
       :p1="p1"
       :p2="p2"
