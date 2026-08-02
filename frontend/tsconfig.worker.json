@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": [
+    "worker/**/*.ts",
+    "db/**/*.ts",
+    "build/**/*.ts",
+    "drizzle.config.ts",
+    "vite.sites.config.ts"
+  ]
+}

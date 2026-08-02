@@ -4,7 +4,7 @@ import { maybeNotifyDeadlines, updateTitleBadge } from '../notifications.js'
 import { useServerClock } from './useServerClock.js'
 
 /**
- * Core game state + SSE/poll refresh.
+ * Core game state + poll refresh, with SSE enabled where the runtime supports it.
  * Clock offset lives in useServerClock (SRP).
  */
 export function useFamSync({
@@ -12,7 +12,8 @@ export function useFamSync({
   checkBurns,
   applyWeekChange,
   onAfterRefresh,
-  fetchStateFn = fetchState
+  fetchStateFn = fetchState,
+  sseEnabled = import.meta.env.VITE_FAM_SSE_ENABLED !== 'false'
 }) {
   const players = ref([])
   const tasks = ref([])
@@ -126,10 +127,12 @@ export function useFamSync({
         updateTitleBadge(tasks.value, now.value)
       }, 1000)
       poller = setInterval(loopRefresh, 15000)
-      es = new EventSource('/api/stream')
-      es.onmessage = loopRefresh
-      es.onerror = () => {
-        loopRefresh()
+      if (sseEnabled) {
+        es = new EventSource('/api/stream')
+        es.onmessage = loopRefresh
+        es.onerror = () => {
+          loopRefresh()
+        }
       }
       onTickExtra?.onMount?.()
     })

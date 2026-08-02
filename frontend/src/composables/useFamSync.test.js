@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const lifecycleMocks = vi.hoisted(() => ({
+  mounted: null,
+  unmounted: null
+}))
 
 const notificationMocks = vi.hoisted(() => ({
   maybeNotifyDeadlines: vi.fn(),
@@ -6,6 +11,19 @@ const notificationMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../notifications.js', () => notificationMocks)
+
+vi.mock('vue', async importOriginal => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    onMounted: vi.fn(callback => {
+      lifecycleMocks.mounted = callback
+    }),
+    onUnmounted: vi.fn(callback => {
+      lifecycleMocks.unmounted = callback
+    })
+  }
+})
 
 import { useFamSync } from './useFamSync.js'
 
@@ -35,7 +53,7 @@ function fixture(label, overrides = {}) {
   }
 }
 
-function makeSync(fetchStateFn, hiddenIds = new Set()) {
+function makeSync(fetchStateFn, hiddenIds = new Set(), options = {}) {
   const applyWeekChange = vi.fn()
   const onAfterRefresh = vi.fn()
   const sync = useFamSync({
@@ -43,7 +61,8 @@ function makeSync(fetchStateFn, hiddenIds = new Set()) {
     checkBurns: vi.fn(),
     applyWeekChange,
     onAfterRefresh,
-    fetchStateFn
+    fetchStateFn,
+    ...options
   })
   return { sync, applyWeekChange, onAfterRefresh }
 }
@@ -54,7 +73,53 @@ async function flushMicrotasks() {
 }
 
 beforeEach(() => {
+  lifecycleMocks.mounted = null
+  lifecycleMocks.unmounted = null
   vi.clearAllMocks()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
+
+describe('useFamSync loop transport', () => {
+  it('opens and closes the EventSource by default', () => {
+    vi.useFakeTimers()
+    const close = vi.fn()
+    const eventSource = vi.fn(function EventSourceMock() {
+      this.close = close
+    })
+    vi.stubGlobal('EventSource', eventSource)
+    const fetchStateFn = vi.fn().mockResolvedValue(fixture('local'))
+    const { sync } = makeSync(fetchStateFn)
+
+    sync.startLoop()
+    lifecycleMocks.mounted()
+
+    expect(eventSource).toHaveBeenCalledWith('/api/stream')
+    lifecycleMocks.unmounted()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps polling without opening an EventSource when SSE is disabled', async () => {
+    vi.useFakeTimers()
+    const eventSource = vi.fn()
+    vi.stubGlobal('EventSource', eventSource)
+    const fetchStateFn = vi.fn().mockResolvedValue(fixture('sites'))
+    const { sync } = makeSync(fetchStateFn, new Set(), { sseEnabled: false })
+
+    sync.startLoop()
+    expect(lifecycleMocks.mounted).toBeTypeOf('function')
+    lifecycleMocks.mounted()
+
+    expect(fetchStateFn).toHaveBeenCalledTimes(1)
+    expect(eventSource).not.toHaveBeenCalled()
+    await flushMicrotasks()
+
+    expect(lifecycleMocks.unmounted).toBeTypeOf('function')
+    lifecycleMocks.unmounted()
+  })
 })
 
 describe('useFamSync refresh single-flight', () => {

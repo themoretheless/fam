@@ -31,6 +31,7 @@
 **/dist/
 **/coverage/
 **/.vite/
+**/.wrangler/
 /frontend/releases/
 /frontend/.update-fam.lock/
 /frontend/.dist-stage.*/
