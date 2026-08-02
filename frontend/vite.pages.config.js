@@ -18,7 +18,7 @@ const pagesCsp = [
 ].join('; ')
 
 export default defineConfig({
-  base: '/fam-pages/',
+  base: '/fam/',
   define: {
     'import.meta.env.VITE_FAM_API_MODE': JSON.stringify('local'),
     'import.meta.env.VITE_FAM_SSE_ENABLED': JSON.stringify('false')

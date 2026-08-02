@@ -50,8 +50,8 @@ if (
 ) {
   throw new Error('Pages index has no restrictive CSP')
 }
-if (!index.includes('/fam-pages/assets/') || !index.includes('/fam-pages/theme-init.js')) {
-  throw new Error('Pages index does not use the /fam-pages/ base path')
+if (!index.includes('/fam/assets/') || !index.includes('/fam/theme-init.js')) {
+  throw new Error('Pages index does not use the /fam/ base path')
 }
 if (/<script(?![^>]*\bsrc=)[^>]*>/i.test(index)) {
   throw new Error('Pages index contains an inline script')
