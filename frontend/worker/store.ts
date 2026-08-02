@@ -1,5 +1,15 @@
 import { defaultDb } from "./domain";
-import type { Db, FamilyShelfItem, MemorableDate, Player } from "./types";
+import type {
+  Achievement,
+  Db,
+  FamEvent,
+  FamilyShelfItem,
+  MemorableDate,
+  Player,
+  Reaction,
+  SeasonResult,
+  Task,
+} from "./types";
 
 export const STATE_SCHEMA_VERSION = 1;
 export const CONTENT_SEED_VERSION = 2;
@@ -52,8 +62,20 @@ const CREATE_STATE_TABLE = `
     schema_version INTEGER NOT NULL,
     revision INTEGER NOT NULL,
     state_json TEXT NOT NULL,
-    updated_at_ms INTEGER NOT NULL
+    updated_at_ms INTEGER NOT NULL,
+    content_seed_version INTEGER NOT NULL DEFAULT 0
   )
+`;
+
+const SELECT_CONTENT_SEED_COLUMN = `
+  SELECT COUNT(*) AS count
+  FROM pragma_table_info('app_state')
+  WHERE name = 'content_seed_version'
+`;
+
+const ADD_CONTENT_SEED_COLUMN = `
+  ALTER TABLE app_state
+  ADD COLUMN content_seed_version INTEGER NOT NULL DEFAULT 0
 `;
 
 const INSERT_DEFAULT_STATE = `
@@ -67,7 +89,7 @@ const INSERT_DEFAULT_STATE = `
 `;
 
 const SELECT_STATE = `
-  SELECT schema_version, revision, state_json
+  SELECT schema_version, revision, state_json, content_seed_version
   FROM app_state
   WHERE singleton = 1
 `;
@@ -79,6 +101,27 @@ const UPDATE_STATE = `
       state_json = ?,
       updated_at_ms = ?
   WHERE singleton = 1 AND revision = ?
+`;
+
+const UPDATE_SEEDED_STATE = `
+  UPDATE app_state
+  SET state_json = ?,
+      content_seed_version = ?,
+      revision = revision + 1,
+      updated_at_ms = ?
+  WHERE singleton = 1
+    AND revision = ?
+    AND content_seed_version = ?
+`;
+
+const UPDATE_CONTENT_SEED_MARKER = `
+  UPDATE app_state
+  SET content_seed_version = ?,
+      revision = revision + 1,
+      updated_at_ms = ?
+  WHERE singleton = 1
+    AND revision = ?
+    AND content_seed_version = ?
 `;
 
 export interface D1RunResult {
@@ -120,6 +163,15 @@ interface StateRow {
   schema_version: number | string;
   revision: number | string;
   state_json: string;
+  content_seed_version: number | string;
+}
+
+interface SelectedState extends LoadedState {
+  contentSeedVersion: number;
+}
+
+interface ColumnCountRow {
+  count: number | string;
 }
 
 export class StateStoreError extends Error {
@@ -208,6 +260,152 @@ function changesOf(result: D1RunResult): number {
   return Number.isFinite(Number(changes)) ? Number(changes) : 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isPlayer(value: unknown): value is Player {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.avatar === "string" &&
+    isFiniteNumber(value.score) &&
+    isFiniteNumber(value.xp) &&
+    isNullableFiniteNumber(value.last_claim_at) &&
+    typeof value.comeback_week_key === "string"
+  );
+}
+
+function isTask(value: unknown): value is Task {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.title === "string" &&
+    typeof value.emoji === "string" &&
+    isFiniteNumber(value.base_points) &&
+    isFiniteNumber(value.created_at) &&
+    isFiniteNumber(value.deadline) &&
+    ["open", "done", "burned", "scheduled"].includes(String(value.status)) &&
+    isNullableString(value.claimed_by) &&
+    isNullableFiniteNumber(value.awarded_points) &&
+    isNullableFiniteNumber(value.finished_at) &&
+    isNullableFiniteNumber(value.repeat_hours) &&
+    isNullableFiniteNumber(value.interval_hours) &&
+    isNullableFiniteNumber(value.fuse_hours) &&
+    isNullableFiniteNumber(value.appear_at)
+  );
+}
+
+function isReaction(value: unknown): value is Reaction {
+  return (
+    isRecord(value) &&
+    typeof value.player_id === "string" &&
+    typeof value.emoji === "string"
+  );
+}
+
+function isEvent(value: unknown): value is FamEvent {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.kind === "string" &&
+    typeof value.text === "string" &&
+    isFiniteNumber(value.at) &&
+    Array.isArray(value.reactions) &&
+    value.reactions.every(isReaction)
+  );
+}
+
+function isSeason(value: unknown): value is SeasonResult {
+  return (
+    isRecord(value) &&
+    typeof value.week_key === "string" &&
+    isFiniteNumber(value.p1_score) &&
+    isFiniteNumber(value.p2_score) &&
+    isNullableString(value.winner)
+  );
+}
+
+function isAchievement(value: unknown): value is Achievement {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.player_id === "string" &&
+    typeof value.key === "string" &&
+    typeof value.title === "string" &&
+    typeof value.emoji === "string" &&
+    isFiniteNumber(value.at)
+  );
+}
+
+function isShelfItem(value: unknown): value is FamilyShelfItem {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.title === "string" &&
+    typeof value.emoji === "string" &&
+    isFiniteNumber(value.base_points) &&
+    isFiniteNumber(value.hours) &&
+    typeof value.repeat === "boolean" &&
+    isNullableFiniteNumber(value.interval_hours)
+  );
+}
+
+function isMemorableDate(value: unknown): value is MemorableDate {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.title === "string" &&
+    typeof value.date === "string" &&
+    ["anniversary", "meeting", "birthday", "custom"].includes(String(value.kind))
+  );
+}
+
+function isStoredState(value: unknown): value is StoredState {
+  if (!isRecord(value)) return false;
+  if (
+    !Array.isArray(value.players) ||
+    value.players.length !== 2 ||
+    !value.players.every(isPlayer) ||
+    value.players[0]!.id !== "p1" ||
+    value.players[1]!.id !== "p2"
+  ) {
+    return false;
+  }
+  return (
+    Array.isArray(value.tasks) &&
+    value.tasks.every(isTask) &&
+    Array.isArray(value.events) &&
+    value.events.every(isEvent) &&
+    typeof value.week_key === "string" &&
+    Array.isArray(value.seasons) &&
+    value.seasons.every(isSeason) &&
+    Array.isArray(value.achievements) &&
+    value.achievements.every(isAchievement) &&
+    Number.isSafeInteger(value.week_burns) &&
+    Number(value.week_burns) >= 0 &&
+    Number.isSafeInteger(value.week_claims) &&
+    Number(value.week_claims) >= 0 &&
+    Array.isArray(value.family_shelf) &&
+    value.family_shelf.every(isShelfItem) &&
+    Array.isArray(value.memorable_dates) &&
+    value.memorable_dates.every(isMemorableDate)
+  );
+}
+
 const DB_KEYS = Object.keys(defaultDb()).sort();
 const PLAYER_KEYS: ReadonlyArray<keyof Player> = [
   "avatar",
@@ -272,7 +470,6 @@ function isSystemWeekKey(value: unknown): value is string {
 }
 
 function mayReceiveExamples(state: StoredState, revision: number): boolean {
-  if (Object.prototype.hasOwnProperty.call(state, "content_seed_version")) return false;
   if (!hasPristineContent(state)) return false;
   return (
     (revision === 0 && state.week_key === "") ||
@@ -280,41 +477,56 @@ function mayReceiveExamples(state: StoredState, revision: number): boolean {
   );
 }
 
-function hasCompletedContentSeed(state: StoredState): boolean {
-  const version = state.content_seed_version;
-  return Number.isSafeInteger(version) && (version ?? 0) >= CONTENT_SEED_VERSION;
-}
-
-/** Mutates a loaded snapshot once; revision is part of the conservative safety check. */
-export function applyExampleContentSeed(state: StoredState, revision: number): boolean {
-  if (hasCompletedContentSeed(state)) return false;
-
-  if (mayReceiveExamples(state, revision)) {
-    state.family_shelf.push(...EXAMPLE_FAMILY_SHELF.map((item) => ({ ...item })));
-    state.memorable_dates.push(...EXAMPLE_MEMORABLE_DATES.map((item) => ({ ...item })));
-  }
-  state.content_seed_version = CONTENT_SEED_VERSION;
+/** Adds examples only to a state snapshot proven untouched at this exact revision. */
+export function applyExampleContentSeed(
+  state: StoredState,
+  revision: number,
+  contentSeedVersion: number,
+): boolean {
+  if (contentSeedVersion >= CONTENT_SEED_VERSION) return false;
+  if (!mayReceiveExamples(state, revision)) return false;
+  state.family_shelf.push(...EXAMPLE_FAMILY_SHELF.map((item) => ({ ...item })));
+  state.memorable_dates.push(...EXAMPLE_MEMORABLE_DATES.map((item) => ({ ...item })));
   return true;
 }
 
 async function bootstrapExampleContent(db: D1Database): Promise<void> {
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const loaded = await selectState(db);
-    const draft = cloneState(loaded.state);
-    if (!applyExampleContentSeed(draft, loaded.revision)) return;
+    if (loaded.contentSeedVersion >= CONTENT_SEED_VERSION) return;
 
-    const serialized = serializeState(draft);
+    const draft = cloneState(loaded.state);
+    const shouldSeed = applyExampleContentSeed(
+      draft,
+      loaded.revision,
+      loaded.contentSeedVersion,
+    );
+
     let result: D1RunResult;
     try {
-      result = (await db
-        .prepare(UPDATE_STATE)
-        .bind(
-          STATE_SCHEMA_VERSION,
-          serialized.json,
-          Date.now(),
-          loaded.revision,
-        )
-        .run()) as D1RunResult;
+      if (shouldSeed) {
+        const serialized = serializeState(draft);
+        result = (await db
+          .prepare(UPDATE_SEEDED_STATE)
+          .bind(
+            serialized.json,
+            CONTENT_SEED_VERSION,
+            Date.now(),
+            loaded.revision,
+            loaded.contentSeedVersion,
+          )
+          .run()) as D1RunResult;
+      } else {
+        result = (await db
+          .prepare(UPDATE_CONTENT_SEED_MARKER)
+          .bind(
+            CONTENT_SEED_VERSION,
+            Date.now(),
+            loaded.revision,
+            loaded.contentSeedVersion,
+          )
+          .run()) as D1RunResult;
+      }
     } catch (error) {
       throw new StateStoreError("Не удалось сохранить примеры", { cause: error });
     }
@@ -327,8 +539,31 @@ async function bootstrapExampleContent(db: D1Database): Promise<void> {
   throw new StateConflictError();
 }
 
+async function contentSeedColumnExists(db: D1Database): Promise<boolean> {
+  const row = await db
+    .prepare(SELECT_CONTENT_SEED_COLUMN)
+    .first<ColumnCountRow>();
+  const count = Number(row?.count ?? 0);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new StateStoreError("Не удалось проверить структуру хранилища");
+  }
+  return count > 0;
+}
+
+async function ensureContentSeedColumn(db: D1Database): Promise<void> {
+  if (await contentSeedColumnExists(db)) return;
+  try {
+    await db.prepare(ADD_CONTENT_SEED_COLUMN).run();
+  } catch (error) {
+    // Another isolate may have added the column after our check.
+    if (await contentSeedColumnExists(db)) return;
+    throw error;
+  }
+}
+
 async function initializeSchema(db: D1Database): Promise<void> {
   await db.prepare(CREATE_STATE_TABLE).run();
+  await ensureContentSeedColumn(db);
   const initial = JSON.stringify(defaultDb());
   if (byteLength(initial) > MAX_STATE_BYTES) {
     throw new StateStoreError("Начальное состояние превышает допустимый размер");
@@ -355,7 +590,7 @@ export async function ensureSchema(db: D1Database): Promise<void> {
   return pending;
 }
 
-async function selectState(db: D1Database): Promise<LoadedState> {
+async function selectState(db: D1Database): Promise<SelectedState> {
   let row: StateRow | null;
   try {
     row = await db.prepare(SELECT_STATE).first<StateRow>();
@@ -368,11 +603,15 @@ async function selectState(db: D1Database): Promise<LoadedState> {
 
   const schemaVersion = Number(row.schema_version);
   const revision = Number(row.revision);
+  const contentSeedVersion = Number(row.content_seed_version);
   if (schemaVersion !== STATE_SCHEMA_VERSION) {
     throw new StateStoreError("Версия состояния приложения не поддерживается");
   }
   if (!Number.isSafeInteger(revision) || revision < 0) {
     throw new StateStoreError("Некорректная ревизия состояния приложения");
+  }
+  if (!Number.isSafeInteger(contentSeedVersion) || contentSeedVersion < 0) {
+    throw new StateStoreError("Некорректная версия примеров");
   }
   if (typeof row.state_json !== "string") {
     throw new StateStoreError("Некорректное состояние приложения");
@@ -380,10 +619,8 @@ async function selectState(db: D1Database): Promise<LoadedState> {
 
   try {
     const state = JSON.parse(row.state_json) as StoredState;
-    if (!state || typeof state !== "object" || Array.isArray(state)) {
-      throw new Error("state must be an object");
-    }
-    return { revision, state };
+    if (!isStoredState(state)) throw new Error("state has an invalid structure");
+    return { revision, state, contentSeedVersion };
   } catch (error) {
     throw new StateStoreError("Сохранённое состояние повреждено", {
       cause: error,
@@ -393,7 +630,8 @@ async function selectState(db: D1Database): Promise<LoadedState> {
 
 export async function loadState(db: D1Database): Promise<LoadedState> {
   await ensureSchema(db);
-  return selectState(db);
+  const loaded = await selectState(db);
+  return { revision: loaded.revision, state: loaded.state };
 }
 
 export async function mutateState<T>(

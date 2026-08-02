@@ -29,15 +29,15 @@ describe("D1 state store", () => {
     expect(loaded.state.tasks).toEqual([]);
     expect(loaded.state.family_shelf).toEqual(EXAMPLE_FAMILY_SHELF);
     expect(loaded.state.memorable_dates).toEqual(EXAMPLE_MEMORABLE_DATES);
-    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
   });
 
   it("applies the content seed idempotently", () => {
     const state = defaultDb();
 
-    expect(applyExampleContentSeed(state, 0)).toBe(true);
+    expect(applyExampleContentSeed(state, 0, 0)).toBe(true);
     const seeded = JSON.stringify(state);
-    expect(applyExampleContentSeed(state, 1)).toBe(false);
+    expect(applyExampleContentSeed(state, 1, CONTENT_SEED_VERSION)).toBe(false);
     expect(JSON.stringify(state)).toBe(seeded);
   });
 
@@ -62,7 +62,7 @@ describe("D1 state store", () => {
     expect(loaded.revision).toBe(3);
     expect(loaded.state.family_shelf).toEqual([]);
     expect(loaded.state.memorable_dates).toEqual([]);
-    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
   });
 
   it("does not restore examples after the family deletes them", async () => {
@@ -78,7 +78,7 @@ describe("D1 state store", () => {
 
     expect(afterDelete.state.family_shelf).toEqual([]);
     expect(afterDelete.state.memorable_dates).toEqual([]);
-    expect(afterDelete.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
   });
 
   it("reclassifies after a real concurrent user edit and never overwrites it", async () => {
@@ -95,7 +95,7 @@ describe("D1 state store", () => {
     expect(loaded.state.players[0]!.name).toBe("Аня");
     expect(loaded.state.family_shelf).toEqual([]);
     expect(loaded.state.memorable_dates).toEqual([]);
-    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
   });
 
   it("retries safely after bootstrap exhausts its CAS budget", async () => {
@@ -104,13 +104,13 @@ describe("D1 state store", () => {
 
     await expect(ensureSchema(database)).rejects.toBeInstanceOf(StateStoreError);
     expect(database.row?.revision).toBe(MAX_CAS_ATTEMPTS);
-    expect(database.parsedState()).not.toHaveProperty("content_seed_version");
+    expect(database.row?.content_seed_version).toBe(0);
 
     const loaded = await loadState(database);
     expect(loaded.revision).toBe(MAX_CAS_ATTEMPTS + 1);
     expect(loaded.state.family_shelf).toEqual([]);
     expect(loaded.state.memorable_dates).toEqual([]);
-    expect(loaded.state.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
   });
 
   it("leaves the v1 JSON untouched when bootstrap persistence fails", async () => {
@@ -122,10 +122,55 @@ describe("D1 state store", () => {
     await expect(ensureSchema(database)).rejects.toBeInstanceOf(StateStoreError);
     expect(database.parsedState()).toEqual(original);
     expect(database.row?.revision).toBe(0);
+    expect(database.row?.content_seed_version).toBe(0);
 
     database.failUpdates = false;
     const loaded = await loadState(database);
     expect(loaded.state.family_shelf).toEqual(EXAMPLE_FAMILY_SHELF);
+  });
+
+  it("adds the marker column to a legacy v1 table without changing schema_version", async () => {
+    const database = new MemoryD1();
+    database.seedStoredState(defaultDb(), 0, 1, 0, false);
+
+    const loaded = await loadState(database);
+
+    expect(database.alterRuns).toBe(1);
+    expect(database.hasContentSeedColumn).toBe(true);
+    expect(database.row?.schema_version).toBe(1);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(loaded.state.family_shelf).toEqual(EXAMPLE_FAMILY_SHELF);
+  });
+
+  it("marks a near-limit used state without rewriting one byte of its JSON", async () => {
+    const database = new MemoryD1();
+    const state = defaultDb();
+    state.events.push({ id: "large", kind: "note", text: "", at: 0, reactions: [] });
+    const emptyBytes = new TextEncoder().encode(JSON.stringify(state)).byteLength;
+    state.events[0]!.text = "x".repeat(1_500_000 - emptyBytes - 4);
+    database.seedStoredState(state, 2);
+    const originalJson = database.row!.state_json;
+
+    const loaded = await loadState(database);
+
+    expect(new TextEncoder().encode(originalJson).byteLength).toBeGreaterThan(1_499_900);
+    expect(database.row?.state_json).toBe(originalJson);
+    expect(database.row?.revision).toBe(3);
+    expect(database.row?.content_seed_version).toBe(CONTENT_SEED_VERSION);
+    expect(loaded.state.events).toHaveLength(1);
+  });
+
+  it("rejects structurally malformed state without writing marker or revision", async () => {
+    const database = new MemoryD1();
+    database.seedRawState(JSON.stringify({ players: [] }), 7);
+    const originalJson = database.row!.state_json;
+
+    await expect(ensureSchema(database)).rejects.toBeInstanceOf(StateStoreError);
+
+    expect(database.row?.state_json).toBe(originalJson);
+    expect(database.row?.revision).toBe(7);
+    expect(database.row?.content_seed_version).toBe(0);
+    expect(database.updateRuns).toBe(0);
   });
 
   it("deep-clones state and leaves storage untouched when a reducer fails", async () => {

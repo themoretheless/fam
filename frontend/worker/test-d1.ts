@@ -9,6 +9,7 @@ interface MemoryRow {
   revision: number;
   state_json: string;
   updated_at_ms: number;
+  content_seed_version: number;
 }
 
 function normalized(query: string): string {
@@ -31,8 +32,17 @@ class MemoryStatement implements D1PreparedStatement {
 
   async first<T>(): Promise<T | null> {
     this.database.queries.push(this.query);
-    if (!normalized(this.query).startsWith("select schema_version")) {
+    const sql = normalized(this.query);
+    if (sql.startsWith("select count(*) as count from pragma_table_info")) {
+      return {
+        count: this.database.hasContentSeedColumn ? 1 : 0,
+      } as T;
+    }
+    if (!sql.startsWith("select schema_version")) {
       throw new Error(`unexpected first(): ${this.query}`);
+    }
+    if (!this.database.hasContentSeedColumn) {
+      throw new Error("no such column: content_seed_version");
     }
     return (this.database.row ? { ...this.database.row } : null) as T | null;
   }
@@ -43,6 +53,20 @@ class MemoryStatement implements D1PreparedStatement {
 
     if (sql.startsWith("create table if not exists app_state")) {
       this.database.schemaRuns += 1;
+      if (!this.database.tableExists) {
+        this.database.tableExists = true;
+        this.database.hasContentSeedColumn = true;
+      }
+      return { success: true, meta: { changes: 0 } } as T;
+    }
+
+    if (sql.startsWith("alter table app_state add column content_seed_version")) {
+      this.database.alterRuns += 1;
+      if (this.database.hasContentSeedColumn) {
+        throw new Error("duplicate column name: content_seed_version");
+      }
+      this.database.hasContentSeedColumn = true;
+      if (this.database.row) this.database.row.content_seed_version = 0;
       return { success: true, meta: { changes: 0 } } as T;
     }
 
@@ -56,6 +80,7 @@ class MemoryStatement implements D1PreparedStatement {
         revision: 0,
         state_json: String(this.values[1]),
         updated_at_ms: Number(this.values[2]),
+        content_seed_version: 0,
       };
       return { success: true, meta: { changes: 1 } } as T;
     }
@@ -77,11 +102,49 @@ class MemoryStatement implements D1PreparedStatement {
         return { success: true, meta: { changes: 0 } } as T;
       }
 
+      if (sql.startsWith("update app_state set state_json = ?")) {
+        const expectedRevision = Number(this.values[3]);
+        const expectedContentSeedVersion = Number(this.values[4]);
+        if (
+          this.database.row.revision !== expectedRevision ||
+          this.database.row.content_seed_version !== expectedContentSeedVersion
+        ) {
+          return { success: true, meta: { changes: 0 } } as T;
+        }
+        this.database.row = {
+          ...this.database.row,
+          revision: expectedRevision + 1,
+          state_json: String(this.values[0]),
+          updated_at_ms: Number(this.values[2]),
+          content_seed_version: Number(this.values[1]),
+        };
+        return { success: true, meta: { changes: 1 } } as T;
+      }
+
+      if (sql.startsWith("update app_state set content_seed_version = ?")) {
+        const expectedRevision = Number(this.values[2]);
+        const expectedContentSeedVersion = Number(this.values[3]);
+        if (
+          this.database.row.revision !== expectedRevision ||
+          this.database.row.content_seed_version !== expectedContentSeedVersion
+        ) {
+          return { success: true, meta: { changes: 0 } } as T;
+        }
+        this.database.row = {
+          ...this.database.row,
+          revision: expectedRevision + 1,
+          updated_at_ms: Number(this.values[1]),
+          content_seed_version: Number(this.values[0]),
+        };
+        return { success: true, meta: { changes: 1 } } as T;
+      }
+
       const expectedRevision = Number(this.values[3]);
       if (this.database.row.revision !== expectedRevision) {
         return { success: true, meta: { changes: 0 } } as T;
       }
       this.database.row = {
+        ...this.database.row,
         schema_version: Number(this.values[0]),
         revision: expectedRevision + 1,
         state_json: String(this.values[1]),
@@ -97,19 +160,48 @@ class MemoryStatement implements D1PreparedStatement {
 export class MemoryD1 implements D1Database {
   row: MemoryRow | null = null;
   readonly queries: string[] = [];
+  tableExists = false;
+  hasContentSeedColumn = false;
   schemaRuns = 0;
+  alterRuns = 0;
   insertRuns = 0;
   updateRuns = 0;
   conflictsRemaining = 0;
   conflictStateMutation: ((state: Record<string, unknown>) => void) | null = null;
   failUpdates = false;
 
-  seedStoredState(state: unknown, revision = 0, schemaVersion = 1): void {
+  seedStoredState(
+    state: unknown,
+    revision = 0,
+    schemaVersion = 1,
+    contentSeedVersion = 0,
+    hasContentSeedColumn = true,
+  ): void {
+    this.tableExists = true;
+    this.hasContentSeedColumn = hasContentSeedColumn;
     this.row = {
       schema_version: schemaVersion,
       revision,
       state_json: JSON.stringify(state),
       updated_at_ms: 0,
+      content_seed_version: contentSeedVersion,
+    };
+  }
+
+  seedRawState(
+    stateJson: string,
+    revision = 0,
+    schemaVersion = 1,
+    contentSeedVersion = 0,
+  ): void {
+    this.tableExists = true;
+    this.hasContentSeedColumn = true;
+    this.row = {
+      schema_version: schemaVersion,
+      revision,
+      state_json: stateJson,
+      updated_at_ms: 0,
+      content_seed_version: contentSeedVersion,
     };
   }
 

@@ -9,6 +9,7 @@ export const appState = sqliteTable(
     revision: integer("revision").notNull(),
     stateJson: text("state_json").notNull(),
     updatedAtMs: integer("updated_at_ms").notNull(),
+    contentSeedVersion: integer("content_seed_version").notNull().default(0),
   },
   (table) => [
     check("app_state_singleton_check", sql`${table.singleton} = 1`),

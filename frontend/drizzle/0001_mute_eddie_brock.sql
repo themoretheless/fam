@@ -1,0 +1,1 @@
+ALTER TABLE `app_state` ADD `content_seed_version` integer DEFAULT 0 NOT NULL;

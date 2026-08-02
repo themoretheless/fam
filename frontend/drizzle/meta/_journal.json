@@ -8,6 +8,13 @@
       "when": 1785617975471,
       "tag": "0000_foamy_captain_britain",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785662515591,
+      "tag": "0001_mute_eddie_brock",
+      "breakpoints": true
     }
   ]
 }
