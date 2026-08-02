@@ -171,6 +171,7 @@ describe('useFamSync refresh single-flight', () => {
     expect(sync.familyShelf.value).toEqual(accepted.family_shelf)
     expect(sync.memorableDates.value).toEqual(accepted.memorable_dates)
     expect(sync.offline.value).toBe(false)
+    expect(sync.syncError.value).toBe('')
     expect(applyWeekChange).toHaveBeenCalledTimes(1)
     expect(applyWeekChange).toHaveBeenCalledWith(
       expect.objectContaining({ nextWeek: accepted.week_key, seasons: accepted.seasons })
@@ -215,6 +216,7 @@ describe('useFamSync refresh single-flight', () => {
     await expect(sync.refresh()).resolves.toBe(false)
 
     expect(sync.offline.value).toBe(true)
+    expect(sync.syncError.value).toBe('network down')
     expect(applyWeekChange).not.toHaveBeenCalled()
     expect(onAfterRefresh).not.toHaveBeenCalled()
     expect(notificationMocks.maybeNotifyDeadlines).not.toHaveBeenCalled()

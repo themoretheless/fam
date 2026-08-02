@@ -1,13 +1,16 @@
 <script setup>
 import { computed, nextTick, ref } from 'vue'
 import {
+  IS_LOCAL_DEMO,
   createTask,
   createShelfItem,
   updateShelfItem,
   deleteShelfItem,
   createMemorableDate as createMemorableDateApi,
   updateMemorableDate as updateMemorableDateApi,
-  deleteMemorableDate as deleteMemorableDateApi
+  deleteMemorableDate as deleteMemorableDateApi,
+  localDemoWritesSupported,
+  resetDemoState
 } from './api.js'
 import { localDateParts, upcomingMemorableDates } from './memorableDates.js'
 import { playAdd } from './sounds.js'
@@ -70,6 +73,7 @@ const {
   history,
   familyShelf,
   memorableDates,
+  syncError,
   markPlayersFresh,
   refresh,
   startLoop
@@ -78,6 +82,8 @@ const {
   checkBurns: () => checkBurns(tasks, now),
   applyWeekChange
 })
+
+const demoWritesSupported = localDemoWritesSupported()
 
 const { p1, p2, leaderId, seasonWins, achP1, achP2 } = usePlayersView(
   players,
@@ -310,6 +316,17 @@ function onRemove(task) {
 function onRename(player) {
   openRename(player)
 }
+
+async function onResetDemo() {
+  if (!window.confirm('Удалить все данные этого демо из текущего браузера?')) return
+  try {
+    await resetDemoState()
+    await refresh()
+    showToast('Демо сброшено')
+  } catch (error) {
+    showToast(error.message || 'Не удалось сбросить демо')
+  }
+}
 </script>
 
 <template>
@@ -383,7 +400,10 @@ function onRename(player) {
       :duel-pct="duelPct"
       :season-countdown="seasonCountdown"
       :offline="offline"
-      :show-phone-hint="showPhoneHint"
+      :offline-message="syncError"
+      :demo-mode="IS_LOCAL_DEMO"
+      :demo-writes-supported="demoWritesSupported"
+      :show-phone-hint="showPhoneHint && !IS_LOCAL_DEMO"
       :memorable-badge="memorableBadge"
       @toggle-mute="onToggleMute"
       @toggle-theme="onToggleTheme"
@@ -391,6 +411,7 @@ function onRename(player) {
       @enable-notif="onEnableNotif"
       @open-stats="openStats"
       @open-memorable="openMemorableDates"
+      @reset-demo="onResetDemo"
       @dismiss-phone-hint="dismissPhoneHint"
     />
 

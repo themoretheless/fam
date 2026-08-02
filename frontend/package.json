@@ -10,6 +10,7 @@
     "dev": "vite",
     "dev:sites": "vite --config vite.sites.config.ts",
     "build": "vite build",
+    "build:pages": "vite build --config vite.pages.config.js",
     "build:sites": "vite build --config vite.sites.config.ts",
     "preview": "vite preview",
     "preview:sites": "vite preview --config vite.sites.config.ts",
@@ -17,6 +18,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "typecheck:worker": "tsc --project tsconfig.worker.json",
+    "verify:pages": "node build/verify-pages.mjs",
+    "check:pages": "npm run typecheck:worker && npm test && npm run build:pages && npm run verify:pages",
     "check:sites": "npm run typecheck:worker && npm test && npm run build:sites"
   },
   "dependencies": {

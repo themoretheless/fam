@@ -29,6 +29,7 @@
 **/node_modules/
 **/target/
 **/dist/
+**/dist-pages/
 **/coverage/
 **/.vite/
 **/.wrangler/

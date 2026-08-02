@@ -1,11 +1,15 @@
-async function j(url, opts) {
-  const res = await fetch(url, opts)
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || res.statusText)
+import * as localApi from './localApi.js'
+
+export const IS_LOCAL_DEMO = import.meta.env.VITE_FAM_API_MODE === 'local'
+
+async function request(url, options) {
+  const response = await fetch(url, options)
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.error || response.statusText)
   }
-  if (res.status === 204) return null
-  const text = await res.text()
+  if (response.status === 204) return null
+  const text = await response.text()
   return text ? JSON.parse(text) : null
 }
 
@@ -15,20 +19,48 @@ const json = (method, body) => ({
   body: JSON.stringify(body)
 })
 
-export const fetchState = () => j('/api/state')
-export const createTask = (task) => j('/api/tasks', json('POST', task))
-export const createShelfItem = (item) => j('/api/shelf', json('POST', item))
-export const updateShelfItem = (id, item) =>
-  j(`/api/shelf/${encodeURIComponent(id)}`, json('PUT', item))
-export const deleteShelfItem = (id) =>
-  j(`/api/shelf/${encodeURIComponent(id)}`, { method: 'DELETE' })
-export const createMemorableDate = (item) => j('/api/memorable-dates', json('POST', item))
-export const updateMemorableDate = (id, item) =>
-  j(`/api/memorable-dates/${encodeURIComponent(id)}`, json('PUT', item))
-export const deleteMemorableDate = (id) =>
-  j(`/api/memorable-dates/${encodeURIComponent(id)}`, { method: 'DELETE' })
-export const claimTask = (id, player_id) => j(`/api/tasks/${id}/claim`, json('POST', { player_id }))
-export const deleteTask = (id) => j(`/api/tasks/${id}`, { method: 'DELETE' })
-export const renamePlayer = (id, name) => j(`/api/players/${id}`, json('PATCH', { name }))
-export const reactEvent = (id, player_id, emoji) =>
-  j(`/api/events/${id}/react`, json('POST', { player_id, emoji }))
+const remoteApi = {
+  fetchState: () => request('/api/state'),
+  createTask: task => request('/api/tasks', json('POST', task)),
+  createShelfItem: item => request('/api/shelf', json('POST', item)),
+  updateShelfItem: (id, item) =>
+    request(`/api/shelf/${encodeURIComponent(id)}`, json('PUT', item)),
+  deleteShelfItem: id =>
+    request(`/api/shelf/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  createMemorableDate: item => request('/api/memorable-dates', json('POST', item)),
+  updateMemorableDate: (id, item) =>
+    request(`/api/memorable-dates/${encodeURIComponent(id)}`, json('PUT', item)),
+  deleteMemorableDate: id =>
+    request(`/api/memorable-dates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  claimTask: (id, playerId) =>
+    request(`/api/tasks/${id}/claim`, json('POST', { player_id: playerId })),
+  deleteTask: id => request(`/api/tasks/${id}`, { method: 'DELETE' }),
+  renamePlayer: (id, name) => request(`/api/players/${id}`, json('PATCH', { name })),
+  reactEvent: (id, playerId, emoji) =>
+    request(`/api/events/${id}/react`, json('POST', { player_id: playerId, emoji }))
+}
+
+const api = IS_LOCAL_DEMO ? localApi : remoteApi
+
+export const fetchState = api.fetchState
+export const createTask = api.createTask
+export const createShelfItem = api.createShelfItem
+export const updateShelfItem = api.updateShelfItem
+export const deleteShelfItem = api.deleteShelfItem
+export const createMemorableDate = api.createMemorableDate
+export const updateMemorableDate = api.updateMemorableDate
+export const deleteMemorableDate = api.deleteMemorableDate
+export const claimTask = api.claimTask
+export const deleteTask = api.deleteTask
+export const renamePlayer = api.renamePlayer
+export const reactEvent = api.reactEvent
+
+export const localDemoWritesSupported = IS_LOCAL_DEMO
+  ? localApi.localDemoWritesSupported
+  : () => true
+
+export const resetDemoState = IS_LOCAL_DEMO
+  ? localApi.resetDemoState
+  : async () => {
+      throw new Error('Сброс доступен только в браузерном демо')
+    }

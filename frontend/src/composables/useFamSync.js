@@ -3,6 +3,8 @@ import { fetchState } from '../api.js'
 import { maybeNotifyDeadlines, updateTitleBadge } from '../notifications.js'
 import { useServerClock } from './useServerClock.js'
 
+const BUILD_SSE_ENABLED = import.meta.env.VITE_FAM_SSE_ENABLED !== 'false'
+
 /**
  * Core game state + poll refresh, with SSE enabled where the runtime supports it.
  * Clock offset lives in useServerClock (SRP).
@@ -13,7 +15,7 @@ export function useFamSync({
   applyWeekChange,
   onAfterRefresh,
   fetchStateFn = fetchState,
-  sseEnabled = import.meta.env.VITE_FAM_SSE_ENABLED !== 'false'
+  sseEnabled = BUILD_SSE_ENABLED
 }) {
   const players = ref([])
   const tasks = ref([])
@@ -26,6 +28,7 @@ export function useFamSync({
   const history = ref([])
   const familyShelf = ref([])
   const memorableDates = ref([])
+  const syncError = ref('')
 
   const { now, applyServerNow, tick, getOffset } = useServerClock()
 
@@ -45,18 +48,19 @@ export function useFamSync({
     while (!disposed) {
       const generation = requestedGeneration
       let state
-      let failed = false
+      let failure = null
       try {
         state = await fetchStateFn()
-      } catch {
-        failed = true
+      } catch (error) {
+        failure = error
       }
 
       if (disposed) return false
       // A demand that arrived while this request was in flight mandates a trailing fetch.
       if (generation !== requestedGeneration) continue
-      if (failed) {
+      if (failure) {
         offline.value = true
+        syncError.value = failure?.message || ''
         return false
       }
 
@@ -85,6 +89,7 @@ export function useFamSync({
       familyShelf.value = state.family_shelf ?? []
       memorableDates.value = state.memorable_dates ?? []
       offline.value = false
+      syncError.value = ''
       maybeNotifyDeadlines(tasks.value, now.value)
       updateTitleBadge(tasks.value, now.value)
       onAfterRefresh?.(state)
@@ -127,7 +132,7 @@ export function useFamSync({
         updateTitleBadge(tasks.value, now.value)
       }, 1000)
       poller = setInterval(loopRefresh, 15000)
-      if (sseEnabled) {
+      if (BUILD_SSE_ENABLED && sseEnabled) {
         es = new EventSource('/api/stream')
         es.onmessage = loopRefresh
         es.onerror = () => {
@@ -159,6 +164,7 @@ export function useFamSync({
     history,
     familyShelf,
     memorableDates,
+    syncError,
     markPlayersFresh,
     refresh,
     startLoop,

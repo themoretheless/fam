@@ -13,6 +13,9 @@ defineProps({
   duelPct: { type: Object, default: null },
   seasonCountdown: { type: String, default: '' },
   offline: Boolean,
+  offlineMessage: { type: String, default: '' },
+  demoMode: Boolean,
+  demoWritesSupported: { type: Boolean, default: true },
   showPhoneHint: Boolean,
   memorableBadge: { type: String, default: '' }
 })
@@ -24,6 +27,7 @@ const emit = defineEmits([
   'enable-notif',
   'open-stats',
   'open-memorable',
+  'reset-demo',
   'dismiss-phone-hint'
 ])
 </script>
@@ -60,6 +64,19 @@ const emit = defineEmits([
     >{{ notifPerm === 'granted' ? '🔔' : '🔕' }}</button>
     <h1>🏡 Наш быт</h1>
     <p>кто сделал – того и очки · чем дольше дело висит, тем оно дороже</p>
+    <div v-if="demoMode" class="demo-notice" role="status">
+      <span>
+        <b>Публичное демо</b> · не вводите приватные данные · без синхронизации
+      </span>
+      <button type="button" class="demo-reset" @click="emit('reset-demo')">Сбросить</button>
+      <small>
+        Данные остаются в этом браузере; другие страницы на themoretheless.github.io могут
+        прочитать их здесь.
+      </small>
+      <small v-if="!demoWritesSupported">
+        Этот браузер поддерживает только просмотр: безопасное сохранение недоступно.
+      </small>
+    </div>
     <p v-if="weekKey" class="season-line">сезон {{ weekKey }}</p>
     <DuelBar
       v-if="weekKey && duelPct"
@@ -80,7 +97,9 @@ const emit = defineEmits([
         <span v-if="memorableBadge" class="memorable-badge">{{ memorableBadge }}</span>
       </button>
     </div>
-    <span v-if="offline" class="offline">⚠️ нет связи с сервером</span>
+    <span v-if="offline" class="offline">
+      ⚠️ {{ offlineMessage || (demoMode ? 'локальное хранилище недоступно' : 'нет связи с сервером') }}
+    </span>
     <div v-if="showPhoneHint" class="phone-hint">
       <span>📱 С телефона в той же Wi‑Fi: адрес компьютера в сети и порт 7878</span>
       <button type="button" class="phone-hint-x" aria-label="Скрыть" @click="emit('dismiss-phone-hint')">×</button>
@@ -94,6 +113,42 @@ const emit = defineEmits([
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
+}
+
+.demo-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 7px 10px;
+  width: fit-content;
+  max-width: min(100%, 620px);
+  margin: 10px auto 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(122, 162, 247, 0.45);
+  border-radius: 14px;
+  background: rgba(122, 162, 247, 0.12);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.demo-notice small {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+
+.demo-reset {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+}
+
+.demo-reset:hover {
+  border-color: rgba(122, 162, 247, 0.75);
 }
 
 .memorable-btn {
